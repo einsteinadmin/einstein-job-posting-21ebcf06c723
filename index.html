@@ -96,10 +96,37 @@
     color: white;
     padding: 10px 24px;
     display: flex;
-    gap: 12px;
-    align-items: center;
+    flex-direction: column;
+    gap: 8px;
     font-size: 13px;
+  }
+  .toolbar-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
     flex-wrap: wrap;
+  }
+  .toolbar-row + .toolbar-row {
+    padding-top: 8px;
+    border-top: 1px solid #4a4a4a;
+  }
+  .editor-toolbar select {
+    background: #4a4a4a;
+    color: white;
+    border: 1px solid #555;
+    padding: 6px 10px;
+    border-radius: 3px;
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    min-width: 200px;
+  }
+  .editor-toolbar select:focus { outline: 2px solid var(--indeed-blue); }
+  .toolbar-divider {
+    width: 1px;
+    height: 24px;
+    background: #4a4a4a;
+    margin: 0 4px;
   }
   .editor-toolbar .label {
     color: #a0a0a0;
@@ -433,7 +460,7 @@
   <div class="indeed-logo">indeed</div>
   <div class="indeed-search">
     <input type="text" value="Lead Mover & Driver" disabled>
-    <input type="text" value="North Dallas, TX" disabled>
+    <input type="text" id="navLocation" value="North Austin, TX" disabled>
     <button>Find jobs</button>
   </div>
   <div class="indeed-nav-right">
@@ -445,17 +472,30 @@
 
 <!-- Editor Toolbar (real, working) -->
 <div class="editor-toolbar">
-  <span class="label">EDITOR</span>
-  <button class="primary" onclick="copyForIndeed()" title="Paste straight into Indeed's job description field, ClearCo, or any rich-text editor — formatting preserved">📥 Copy for Indeed / ClearCo</button>
-  <button onclick="copyPlain()" title="Paste anywhere plain (Slack, email, ATS that strips formatting)">📋 Plain text</button>
-  <button onclick="copyHtml()" title="Raw HTML source (for ClearCo / Rippling / API fields)">📄 HTML source</button>
-  <button onclick="togglePreview()" id="previewBtn" title="Hide editor chrome to see exactly what Indeed will show">👁 Preview mode</button>
-  <button onclick="showHtml()">{ } View HTML</button>
-  <button onclick="resetToDefault()">↺ Reset to default</button>
-  <span class="save-indicator" id="saveIndicator">✓ saved</span>
-  <span class="spacer"></span>
-  <span class="stat">Words: <b id="wordCount">0</b></span>
-  <span class="stat">Chars: <b id="charCount">0</b></span>
+  <div class="toolbar-row">
+    <span class="label">EDITOR</span>
+    <button class="primary" onclick="copyForIndeed()" title="Paste straight into Indeed's job description field, ClearCo, or any rich-text editor — formatting preserved">📥 Copy for Indeed / ClearCo</button>
+    <button onclick="copyPlain()" title="Paste anywhere plain (Slack, email, ATS that strips formatting)">📋 Plain text</button>
+    <button onclick="copyHtml()" title="Raw HTML source (for ClearCo / Rippling / API fields)">📄 HTML source</button>
+    <button onclick="togglePreview()" id="previewBtn" title="Hide editor chrome to see exactly what Indeed will show">👁 Preview</button>
+    <button onclick="showHtml()">{ } View HTML</button>
+    <button onclick="resetToDefault()">↺ Reset</button>
+    <span class="save-indicator" id="saveIndicator">✓ saved</span>
+    <span class="spacer"></span>
+    <span class="stat">Words: <b id="wordCount">0</b></span>
+    <span class="stat">Chars: <b id="charCount">0</b></span>
+  </div>
+  <div class="toolbar-row">
+    <span class="label">BRANCH</span>
+    <select id="branchDropdown"></select>
+    <button onclick="applyBranchPreset()" title="Replace the entire posting with this branch's preset (pay numbers, branch name, location)">⟳ Apply branch preset</button>
+    <div class="toolbar-divider"></div>
+    <span class="label">SAVES</span>
+    <select id="savesDropdown"></select>
+    <button onclick="loadSave()" title="Load the selected saved version">📂 Load</button>
+    <button onclick="saveCurrent()" title="Save current state as a named version">💾 Save current as…</button>
+    <button onclick="deleteSave()" title="Delete the selected saved version">🗑 Delete</button>
+  </div>
 </div>
 
 <div class="page">
@@ -468,7 +508,7 @@
           <span class="company-name">Einstein Moving Company</span>
           <span class="company-rating"><span class="star">★</span> <b>4.4</b> · 230 reviews</span>
         </div>
-        <div class="company-location">North Dallas, TX 75001</div>
+        <div class="company-location" id="companyLocation">North Austin, TX</div>
 
         <div class="job-meta">
           <span class="meta-chip salary" contenteditable="true" id="paySalary">$26 – $33+ an hour</span>
@@ -506,7 +546,7 @@
       <div class="rail-stat"><span>Job type</span><span class="v">Full-time</span></div>
       <div class="rail-stat"><span>Shift</span><span class="v">Day shift</span></div>
       <div class="rail-stat"><span>Schedule</span><span class="v">Thu–Sun preferred</span></div>
-      <div class="rail-stat"><span>Location</span><span class="v">North Dallas, TX</span></div>
+      <div class="rail-stat"><span>Location</span><span class="v" id="railLocation">North Austin, TX</span></div>
     </div>
 
     <div class="rail-card">
@@ -545,13 +585,37 @@
 </div>
 
 <script>
-const STORAGE_KEY = 'einstein-job-posting-editor-v1';
+const STORAGE_KEY = 'einstein-job-posting-editor-v2';
+const SAVES_KEY = 'einstein-job-posting-saves-v1';
+const ACTIVE_BRANCH_KEY = 'einstein-job-posting-active-branch';
 
-const DEFAULT_BODY = `<h3>WARNING: This will be the best job post you read all day.</h3>
+// ------- Branch + Tier data -------
+const BRANCHES = {
+  'n-austin':    { name: 'North Austin',  city: 'Austin, TX',      tier: 'premium' },
+  's-austin':    { name: 'South Austin',  city: 'Austin, TX',      tier: 'premium' },
+  'leander':     { name: 'Leander',       city: 'Leander, TX',     tier: 'premium' },
+  'dallas':      { name: 'Dallas',        city: 'Dallas, TX',      tier: 'premium' },
+  'fort-worth':  { name: 'Fort Worth',    city: 'Fort Worth, TX',  tier: 'premium' },
+  'garland':     { name: 'Garland',       city: 'Garland, TX',     tier: 'premium' },
+  'mckinney':    { name: 'McKinney',      city: 'McKinney, TX',    tier: 'premium' },
+  'tampa':       { name: 'Tampa',         city: 'Tampa, FL',       tier: 'premium' },
+  'houston':     { name: 'Houston',       city: 'Houston, TX',     tier: 'standard' },
+  'san-antonio': { name: 'San Antonio',   city: 'San Antonio, TX', tier: 'standard' }
+};
+
+const TIERS = {
+  premium:  { baseTrain: 20, baseLead: 21, takeTrainLow: '26',    takeTrainHigh: '28.50', takeLeadLow: '28.50', takeLeadHigh: '33.25', chipPay: '$26 – $33+ an hour' },
+  standard: { baseTrain: 19, baseLead: 20, takeTrainLow: '25',    takeTrainHigh: '27.50', takeLeadLow: '27.50', takeLeadHigh: '32.25', chipPay: '$25 – $32+ an hour' }
+};
+
+function buildBody(branchKey) {
+  const b = BRANCHES[branchKey];
+  const t = TIERS[b.tier];
+  return `<h3>WARNING: This will be the best job post you read all day.</h3>
 <p>Actually, just go ahead and make it the only job post you read all day, mkaaaayy?</p>
 <p><em>*sips coffee*</em></p>
 <p>Here's the deal: we're a moving company. We pick up people's stuff and carry it from one place to a different place.</p>
-<p>Sounds simple enough… but it turns out that to be REALLY GOOD movers (the only kind worth being, in our opinion) we need REALLY GOOD people for our North Dallas branch.</p>
+<p>Sounds simple enough… but it turns out that to be REALLY GOOD movers (the only kind worth being, in our opinion) we need REALLY GOOD people for our ${b.name} branch.</p>
 <p>People like you. ;)</p>
 <p>And because really good people like you deserve to be paid well and treated with respect, we put together this pretty kickass compensation package.</p>
 
@@ -570,14 +634,14 @@ const DEFAULT_BODY = `<h3>WARNING: This will be the best job post you read all d
 <h3>YOUR MONEY (THE FUN PART)</h3>
 <p>We'll be straight with you. Here's every dollar:</p>
 <ul>
-  <li><b>$20/hr base in training. $21/hr base once you're a Lead.</b> That's the guaranteed floor — paid for every hour you're on the clock, not just "billable" ones.</li>
+  <li><b>$${t.baseTrain}/hr base in training. $${t.baseLead}/hr base once you're a Lead.</b> That's the guaranteed floor — paid for every hour you're on the clock, not just "billable" ones.</li>
   <li><b>Plus tips.</b> Typically $5–$8/hr. (Movers who actually give a damn make more.)</li>
   <li><b>Plus performance bonuses</b> once you're out of training. Up to $3/hr.</li>
   <li><b>Plus $5/hr</b> any time we call you in last-minute.</li>
   <li><b>Plus overtime</b> on hours over 40.</li>
 </ul>
 <p>Stack it all up and a typical week looks like:</p>
-<p><b>Lead in Training: $26–$28.50/hr. Lead: $28.50–$33.25/hr.</b> Top performers earn more.</p>
+<p><b>Lead in Training: $${t.takeTrainLow}–$${t.takeTrainHigh}/hr. Lead: $${t.takeLeadLow}–$${t.takeLeadHigh}/hr.</b> Top performers earn more.</p>
 <p>And Leads aren't a dead-end. <b>4 promotion tiers</b> ahead of you. Your pay grows with you.</p>
 
 <hr>
@@ -649,7 +713,9 @@ const DEFAULT_BODY = `<h3>WARNING: This will be the best job post you read all d
 <hr>
 
 <p><em>For a formal job description including physical, mental, and sensory requirements, email hr@einsteinmoving.com.</em></p>`;
+}
 
+const DEFAULT_BRANCH = 'n-austin';
 const FIELDS = ['jobTitle', 'paySalary', 'jobType', 'jobShift', 'jobWeekend', 'jobBody'];
 
 function loadState() {
@@ -665,6 +731,9 @@ function saveState() {
   FIELDS.forEach(id => {
     state[id] = document.getElementById(id).innerHTML;
   });
+  state.navLocation     = document.getElementById('navLocation').value;
+  state.companyLocation = document.getElementById('companyLocation').innerHTML;
+  state.railLocation    = document.getElementById('railLocation').innerHTML;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   flashSaved();
   updateCounts();
@@ -678,18 +747,167 @@ function flashSaved() {
   flashSaved._t = setTimeout(() => el.classList.remove('show'), 1500);
 }
 
+function getActiveBranch() {
+  return localStorage.getItem(ACTIVE_BRANCH_KEY) || DEFAULT_BRANCH;
+}
+function setActiveBranch(key) {
+  localStorage.setItem(ACTIVE_BRANCH_KEY, key);
+}
+
+function populateBranchDropdown() {
+  const dd = document.getElementById('branchDropdown');
+  const active = getActiveBranch();
+  const premiumOpts = [];
+  const standardOpts = [];
+  Object.entries(BRANCHES).forEach(([key, b]) => {
+    const opt = `<option value="${key}" ${key === active ? 'selected' : ''}>${b.name}</option>`;
+    if (b.tier === 'premium') premiumOpts.push(opt);
+    else standardOpts.push(opt);
+  });
+  dd.innerHTML = `
+    <optgroup label="Premium markets ($20 base)">${premiumOpts.join('')}</optgroup>
+    <optgroup label="Standard markets ($19 base)">${standardOpts.join('')}</optgroup>
+  `;
+}
+
+function applyBranchTo(targetEls, branchKey) {
+  const b = BRANCHES[branchKey];
+  const t = TIERS[b.tier];
+  if (targetEls.body)       targetEls.body.innerHTML = buildBody(branchKey);
+  if (targetEls.paySalary)  targetEls.paySalary.textContent = t.chipPay;
+  if (targetEls.navLoc)     targetEls.navLoc.value = b.city;
+  if (targetEls.coLoc)      targetEls.coLoc.textContent = b.city;
+  if (targetEls.railLoc)    targetEls.railLoc.textContent = b.city;
+}
+
+function applyBranchPreset() {
+  const key = document.getElementById('branchDropdown').value;
+  const b = BRANCHES[key];
+  if (!confirm(`Replace the entire posting with the ${b.name} preset?\n\nThis will reset the body, pay range, and location. Any current edits will be lost.\n\nTip: hit "💾 Save current as…" first if you want to keep your edits.`)) return;
+  applyBranchTo({
+    body: document.getElementById('jobBody'),
+    paySalary: document.getElementById('paySalary'),
+    navLoc: document.getElementById('navLocation'),
+    coLoc: document.getElementById('companyLocation'),
+    railLoc: document.getElementById('railLocation')
+  }, key);
+  setActiveBranch(key);
+  saveState();
+  toast(`Applied ${b.name} preset`);
+}
+
+// ------- Saved Versions -------
+function loadSaves() {
+  try { return JSON.parse(localStorage.getItem(SAVES_KEY)) || {}; } catch { return {}; }
+}
+function setSaves(saves) {
+  localStorage.setItem(SAVES_KEY, JSON.stringify(saves));
+}
+function refreshSavesDropdown() {
+  const saves = loadSaves();
+  const dd = document.getElementById('savesDropdown');
+  const names = Object.keys(saves).sort();
+  if (names.length === 0) {
+    dd.innerHTML = '<option value="">— No saved versions yet —</option>';
+  } else {
+    dd.innerHTML = '<option value="">— Pick a saved version —</option>' +
+      names.map(n => {
+        const branch = saves[n].activeBranch ? ` (${BRANCHES[saves[n].activeBranch]?.name || '?'})` : '';
+        return `<option value="${n}">${n}${branch}</option>`;
+      }).join('');
+  }
+}
+function saveCurrent() {
+  const defaultName = BRANCHES[getActiveBranch()]?.name || 'Untitled';
+  const name = prompt('Save current version as:', defaultName);
+  if (!name || !name.trim()) return;
+  const trimmed = name.trim();
+  const saves = loadSaves();
+  if (saves[trimmed] && !confirm(`"${trimmed}" already exists. Overwrite?`)) return;
+  saves[trimmed] = {
+    jobTitle:   document.getElementById('jobTitle').innerHTML,
+    paySalary:  document.getElementById('paySalary').innerHTML,
+    jobType:    document.getElementById('jobType').innerHTML,
+    jobShift:   document.getElementById('jobShift').innerHTML,
+    jobWeekend: document.getElementById('jobWeekend').innerHTML,
+    jobBody:    document.getElementById('jobBody').innerHTML,
+    navLocation:     document.getElementById('navLocation').value,
+    companyLocation: document.getElementById('companyLocation').innerHTML,
+    railLocation:    document.getElementById('railLocation').innerHTML,
+    activeBranch: getActiveBranch(),
+    savedAt: new Date().toISOString()
+  };
+  setSaves(saves);
+  refreshSavesDropdown();
+  // Select the freshly saved item
+  document.getElementById('savesDropdown').value = trimmed;
+  toast(`Saved as "${trimmed}"`);
+}
+function loadSave() {
+  const name = document.getElementById('savesDropdown').value;
+  if (!name) { alert('Pick a saved version from the dropdown first.'); return; }
+  if (!confirm(`Load "${name}"? Your current edits will be replaced.`)) return;
+  const saves = loadSaves();
+  const v = saves[name];
+  if (!v) return;
+  document.getElementById('jobTitle').innerHTML   = v.jobTitle;
+  document.getElementById('paySalary').innerHTML  = v.paySalary;
+  document.getElementById('jobType').innerHTML    = v.jobType;
+  document.getElementById('jobShift').innerHTML   = v.jobShift;
+  document.getElementById('jobWeekend').innerHTML = v.jobWeekend;
+  document.getElementById('jobBody').innerHTML    = v.jobBody;
+  if (v.navLocation)     document.getElementById('navLocation').value      = v.navLocation;
+  if (v.companyLocation) document.getElementById('companyLocation').innerHTML = v.companyLocation;
+  if (v.railLocation)    document.getElementById('railLocation').innerHTML = v.railLocation;
+  if (v.activeBranch) {
+    setActiveBranch(v.activeBranch);
+    populateBranchDropdown();
+  }
+  saveState();
+  updateCounts();
+  syncRail();
+  toast(`Loaded "${name}"`);
+}
+function deleteSave() {
+  const name = document.getElementById('savesDropdown').value;
+  if (!name) { alert('Pick a saved version from the dropdown first.'); return; }
+  if (!confirm(`Delete saved version "${name}"? This cannot be undone.`)) return;
+  const saves = loadSaves();
+  delete saves[name];
+  setSaves(saves);
+  refreshSavesDropdown();
+  toast(`Deleted "${name}"`);
+}
+
 function init() {
+  populateBranchDropdown();
+  refreshSavesDropdown();
+
   const state = loadState();
   if (state) {
     FIELDS.forEach(id => {
       if (state[id] != null) document.getElementById(id).innerHTML = state[id];
     });
+    if (state.navLocation)     document.getElementById('navLocation').value      = state.navLocation;
+    if (state.companyLocation) document.getElementById('companyLocation').innerHTML = state.companyLocation;
+    if (state.railLocation)    document.getElementById('railLocation').innerHTML = state.railLocation;
   } else {
-    document.getElementById('jobBody').innerHTML = DEFAULT_BODY;
+    // First load — apply default branch preset
+    applyBranchTo({
+      body: document.getElementById('jobBody'),
+      paySalary: document.getElementById('paySalary'),
+      navLoc: document.getElementById('navLocation'),
+      coLoc: document.getElementById('companyLocation'),
+      railLoc: document.getElementById('railLocation')
+    }, DEFAULT_BRANCH);
   }
   FIELDS.forEach(id => {
     const el = document.getElementById(id);
     el.addEventListener('input', debounce(saveState, 400));
+  });
+  ['companyLocation', 'railLocation'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', debounce(saveState, 400));
   });
   updateCounts();
   syncRail();
@@ -787,17 +1005,22 @@ function copyFromModal() {
 }
 
 function resetToDefault() {
-  if (!confirm('Reset to the original draft? Your edits will be lost.')) return;
+  if (!confirm('Reset to the active branch preset? Your edits will be lost.\n\n(This re-applies the currently selected branch from the BRANCH dropdown. Use "💾 Save current as…" first if you want to keep your edits.)')) return;
   localStorage.removeItem(STORAGE_KEY);
   document.getElementById('jobTitle').textContent = 'Lead Mover & Driver — College Students, Veterans, Skilled Trades encouraged to apply!';
-  document.getElementById('paySalary').textContent = '$26 – $33+ an hour';
   document.getElementById('jobType').textContent = 'Full-time';
   document.getElementById('jobShift').textContent = 'Day shift';
   document.getElementById('jobWeekend').textContent = 'Weekends as needed';
-  document.getElementById('jobBody').innerHTML = DEFAULT_BODY;
-  updateCounts();
-  syncRail();
-  toast('Reset to default');
+  const activeBranch = getActiveBranch();
+  applyBranchTo({
+    body: document.getElementById('jobBody'),
+    paySalary: document.getElementById('paySalary'),
+    navLoc: document.getElementById('navLocation'),
+    coLoc: document.getElementById('companyLocation'),
+    railLoc: document.getElementById('railLocation')
+  }, activeBranch);
+  saveState();
+  toast('Reset to ' + BRANCHES[activeBranch].name + ' preset');
 }
 
 function toast(msg) {
